@@ -1,6 +1,7 @@
 package org.devhamzat.authorg.service;
 
-import org.devhamzat.authorg.dto.*;
+import org.devhamzat.authorg.dto.UserDataDtoMapper;
+import org.devhamzat.authorg.dto.UserDto;
 import org.devhamzat.authorg.dto.loginDto.LoginDataDto;
 import org.devhamzat.authorg.dto.loginDto.LoginRequestDto;
 import org.devhamzat.authorg.dto.loginDto.LoginResponse;
@@ -16,32 +17,58 @@ import org.devhamzat.authorg.utils.OrganizationIdGenerator;
 import org.devhamzat.authorg.utils.Status;
 import org.devhamzat.authorg.utils.UserIdGenerator;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
-public class UserServiceImpl implements UserService {
+public class UserServiceImpl implements UserService, UserDetailsService {
     @Autowired
     private UserRepository userRepository;
     @Autowired
     private OrganizationRepository organizationRepository;
-    //    private BCryptPasswordEncoder passwordEncoder;
+    @Autowired
+    private AuthenticationManager authenticationManager;
 
     @Autowired
-    private OrganizationIdGenerator organizationIdGenerator;
+    PasswordEncoder passwordEncoder;
     @Autowired
-    private UserIdGenerator userIdGenerator;
+    OrganizationIdGenerator organizationIdGenerator;
+    @Autowired
+    UserIdGenerator userIdGenerator;
+
+//    private JwtTokenHandler jwtTokenHandler;
+
 
     RegistrationDataDto registrationDataDto = new RegistrationDataDto();
 
-    public UserServiceImpl(UserRepository userRepository, OrganizationIdGenerator organizationIdGenerator, UserIdGenerator userIdGenerator) {
+    public UserServiceImpl(UserRepository userRepository, UserIdGenerator userIdGenerator, OrganizationIdGenerator organizationIdGenerator, PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager
+//                           JwtTokenHandler jwtTokenHandler
+    ) {
         this.userRepository = userRepository;
-        this.organizationIdGenerator = organizationIdGenerator;
         this.userIdGenerator = userIdGenerator;
+        this.organizationIdGenerator = organizationIdGenerator;
+        this.passwordEncoder = passwordEncoder;
+        this.authenticationManager = authenticationManager;
+//        this.jwtTokenHandler = jwtTokenHandler;
     }
 
-    //Todo: hash password
+    public UserServiceImpl() {
+
+    }
+
     @Override
     public RegistrationResponse registerUser(RegistrationRequestDto registrationRequestDto) {
         if (userRepository.existsByEmail(registrationRequestDto.getEmail())) {
@@ -74,37 +101,44 @@ public class UserServiceImpl implements UserService {
         registrationResponse.setMessage("Registration successful");
         registrationResponse.setData(registrationDataDto);
 
-//        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
         userRepository.save(user);
         organizationRepository.save(organization);
         return registrationResponse;
     }
 
-    @Override
+
     public LoginResponse userLogin(LoginRequestDto loginRequestDto) {
+        Authentication authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(loginRequestDto.getEmail(), loginRequestDto.getPassword()));
+        SecurityContextHolder.getContext().setAuthentication(authentication);
         Optional<User> userInfo = userRepository.findByEmail(loginRequestDto.getEmail());
-        if (userInfo.isPresent()) {
-            if (userInfo.get().getEmail().equals(loginRequestDto.getEmail()) && userInfo.get().getPassword().equals(loginRequestDto.getPassword())) {
-                UserDto userDto = new UserDto();
-                userDto.setUserId(userInfo.get().getUserId());
-                userDto.setFirstName(userInfo.get().getFirstName());
-                userDto.setLastName(userInfo.get().getLastName());
-                userDto.setEmail(userInfo.get().getEmail());
-                userDto.setPhone(userInfo.get().getPhone());
+        UserDto userDto = new UserDto();
+        userDto.setUserId(userInfo.get().getUserId());
+        userDto.setFirstName(userInfo.get().getFirstName());
+        userDto.setLastName(userInfo.get().getLastName());
+        userDto.setEmail(userInfo.get().getEmail());
+        userDto.setPhone(userInfo.get().getPhone());
+//        String token = jwtTokenHandler.generateToken(authentication);
+        LoginDataDto loginDataDto = new LoginDataDto();
+        loginDataDto.setAccessToken("");
+        loginDataDto.setData(userDto);
 
-                LoginDataDto loginDataDto = new LoginDataDto();
-                loginDataDto.setAccessToken("hello");
-                loginDataDto.setData(userDto);
+        LoginResponse loginResponse = new LoginResponse();
+        loginResponse.setStatus(Status.success);
+        loginResponse.setMessage("Login successful");
+        loginResponse.setData(loginDataDto);
+        return loginResponse;
+    }
 
-                LoginResponse loginResponse = new LoginResponse();
-                loginResponse.setStatus(Status.success);
-                loginResponse.setMessage("Login successful");
-                loginResponse.setData(loginDataDto);
-                return loginResponse;
-            }
-
-
-        }
-        throw new RegistrationException("Authentication failed", 401);
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        Optional<User> user = userRepository.findByEmail(username);
+        Set<GrantedAuthority> authorities = user.get()
+                .getOrganization()
+                .stream()
+                .map((role) -> new SimpleGrantedAuthority(role.getName())).collect(Collectors.toSet());
+        return new org.springframework.security.core.userdetails.User(user.get().getEmail(),
+                user.get().getPassword(),
+                authorities);
     }
 }
